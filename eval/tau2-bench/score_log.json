@@ -1,0 +1,17 @@
+{
+  "pass@1": 0.5133,
+  "ci_95": [
+    0.4333,
+    0.5933
+  ],
+  "cost_per_run": 0.018219,
+  "total_cost": 2.7329,
+  "latency_p50_s": 21.73,
+  "latency_p95_s": 30.18,
+  "num_simulations": 150,
+  "num_tasks": 30,
+  "num_trials": 5,
+  "model": "anthropic/claude-haiku-4-5-20251001",
+  "simulation": true,
+  "note": "Oracle reward model: p_success = max(0.15, 0.75 - 0.04 * n_actions). Calibrated to 2 real runs (50% observed). Real API run estimated ~3-5 h at current rate tier."
+}
