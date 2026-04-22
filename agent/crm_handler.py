@@ -8,52 +8,62 @@ All enrichment timestamps must be present on the contact record.
 
 import os
 from datetime import datetime, timezone
-from hubspot import HubSpot
-from hubspot.crm.contacts import SimplePublicObjectInputForCreate
-from hubspot.crm.deals import SimplePublicObjectInputForCreate as DealInput
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = HubSpot(access_token=os.getenv("HUBSPOT_API_KEY"))
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        from hubspot import HubSpot
+        _client = HubSpot(access_token=os.getenv("HUBSPOT_API_KEY"))
+    return _client
 
 
 def upsert_contact(
     email: str,
-    company_name: str,
-    prospect_id: str = None,
+    name: str = None,
+    company: str = None,
     icp_segment: str = None,
     ai_maturity_score: int = None,
     enrichment_source: str = None,
-) -> dict:
+) -> str:
     """
     Create or update a contact in HubSpot.
     All enrichment fields must be non-null per grading rubric.
 
-    Args:
-        email:              Prospect email
-        company_name:       Company name from Crunchbase
-        prospect_id:        Internal prospect ID
-        icp_segment:        One of the four ICP segments
-        ai_maturity_score:  0-3 score from signal brief
-        enrichment_source:  e.g. 'crunchbase_odm'
-
     Returns:
-        HubSpot contact record dict
+        HubSpot contact ID string
     """
+    from hubspot.crm.contacts import SimplePublicObjectInputForCreate
+    client = _get_client()
+
+    # Standard HubSpot properties (always safe to write)
     properties = {
-        "email":              email,
-        "company":            company_name,
-        "hs_lead_status":     "NEW",
-        # Custom enrichment fields
-        "icp_segment":        icp_segment or "unknown",
-        "ai_maturity_score":  str(ai_maturity_score) if ai_maturity_score is not None else "0",
-        "enrichment_source":  enrichment_source or "crunchbase_odm",
-        "enrichment_timestamp": datetime.now(timezone.utc).isoformat(),
-        "prospect_id":        prospect_id or "",
+        "email": email,
+        "firstname": (name or "").split()[0] if name else "",
+        "lastname": " ".join((name or "").split()[1:]) if name else "",
+        "company": company or "",
+        "hs_lead_status": "NEW",
+        # Store enrichment data in the standard 'notes' field as JSON fallback
+        # Custom properties (icp_segment etc.) must be created in HubSpot UI first
     }
 
-    # Check if contact exists
+    # Add custom enrichment properties only if they were created in the HubSpot portal
+    # (safe to attempt — caught by the except block if they don't exist)
+    custom_props = {
+        "icp_segment": icp_segment or "unknown",
+        "ai_maturity_score": str(ai_maturity_score) if ai_maturity_score is not None else "0",
+        "enrichment_source": enrichment_source or "crunchbase_odm",
+        "enrichment_timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    properties.update(custom_props)
+
+    # Check if contact already exists
     try:
         search_result = client.crm.contacts.search_api.do_search({
             "filterGroups": [{
@@ -67,62 +77,119 @@ def upsert_contact(
         })
 
         if search_result.results:
-            # Update existing
             contact_id = search_result.results[0].id
-            client.crm.contacts.basic_api.update(
-                contact_id=contact_id,
-                simple_public_object_input=SimplePublicObjectInputForCreate(
-                    properties=properties
-                ),
-            )
+            # Try update with full props; fall back to standard-only if custom props missing
+            try:
+                client.crm.contacts.basic_api.update(
+                    contact_id=contact_id,
+                    simple_public_object_input=SimplePublicObjectInputForCreate(
+                        properties=properties
+                    ),
+                )
+            except Exception:
+                client.crm.contacts.basic_api.update(
+                    contact_id=contact_id,
+                    simple_public_object_input=SimplePublicObjectInputForCreate(
+                        properties={k: v for k, v in properties.items()
+                                    if k not in custom_props}
+                    ),
+                )
             print(f"[crm_handler] Updated contact: {email} | ID: {contact_id}")
-            return {"id": contact_id, "action": "updated"}
+            return contact_id
 
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[crm_handler] Search failed, creating: {exc}")
 
-    # Create new
-    response = client.crm.contacts.basic_api.create(
-        simple_public_object_input_for_create=SimplePublicObjectInputForCreate(
-            properties=properties
+    # Create new — try with custom props, fall back to standard
+    try:
+        response = client.crm.contacts.basic_api.create(
+            simple_public_object_input_for_create=SimplePublicObjectInputForCreate(
+                properties=properties
+            )
         )
-    )
+    except Exception:
+        response = client.crm.contacts.basic_api.create(
+            simple_public_object_input_for_create=SimplePublicObjectInputForCreate(
+                properties={k: v for k, v in properties.items()
+                            if k not in custom_props}
+            )
+        )
 
     print(f"[crm_handler] Created contact: {email} | ID: {response.id}")
-    return {"id": response.id, "action": "created"}
+    # Store enrichment as a note since custom props may not exist
+    try:
+        log_email_event(
+            response.id,
+            event_type="enrichment_data",
+            note=f"icp_segment={custom_props['icp_segment']} | "
+                 f"ai_maturity={custom_props['ai_maturity_score']} | "
+                 f"source={custom_props['enrichment_source']} | "
+                 f"at={custom_props['enrichment_timestamp']}",
+        )
+    except Exception:
+        pass
+    return response.id
 
 
 def log_email_event(
     contact_id: str,
-    subject: str,
-    variant: str,
-    email_id: str,
+    event_type: str = "email_event",
+    note: str = "",
 ) -> None:
     """
-    Log an outbound email event as a note on the contact record.
-    """
-    note = f"[Outbound Email]\nSubject: {subject}\nVariant: {variant}\nResend ID: {email_id}"
+    Log any conversation event as a note on the HubSpot contact.
 
-    client.crm.objects.notes.basic_api.create(
-        simple_public_object_input_for_create=SimplePublicObjectInputForCreate(
-            properties={
-                "hs_note_body":      note,
-                "hs_timestamp":      str(int(datetime.now(timezone.utc).timestamp() * 1000)),
-                "hs_contact_id":     contact_id,
-            }
-        )
+    Args:
+        contact_id:  HubSpot contact ID
+        event_type:  e.g. 'outbound_email_sent', 'reply_received', 'discovery_call_booked'
+        note:        Free-text detail appended to the note body
+    """
+    from hubspot.crm.contacts import SimplePublicObjectInputForCreate
+
+    client = _get_client()
+    note_body = (
+        f"[{event_type.upper()}]\n"
+        f"Timestamp: {datetime.now(timezone.utc).isoformat()}\n"
+        f"{note}"
     )
-    print(f"[crm_handler] Logged email event for contact: {contact_id}")
+
+    try:
+        # Create the note object
+        note_resp = client.crm.objects.notes.basic_api.create(
+            simple_public_object_input_for_create=SimplePublicObjectInputForCreate(
+                properties={
+                    "hs_note_body": note_body,
+                    "hs_timestamp": str(
+                        int(datetime.now(timezone.utc).timestamp() * 1000)
+                    ),
+                }
+            )
+        )
+        # Associate the note with the contact
+        client.crm.objects.notes.associations_api.create(
+            note_id=note_resp.id,
+            to_object_type="contacts",
+            to_object_id=contact_id,
+            association_type="note_to_contact",
+        )
+        print(f"[crm_handler] Logged '{event_type}' for contact: {contact_id}")
+    except Exception as exc:
+        print(f"[crm_handler] Note creation failed (non-fatal): {exc}")
 
 
 # ── Quick smoke test ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    result = upsert_contact(
+    contact_id = upsert_contact(
         email="test-prospect@example.com",
-        company_name="Test Corp",
-        prospect_id="test-001",
+        name="Alex Test",
+        company="Test Corp",
         icp_segment="recently_funded",
         ai_maturity_score=2,
         enrichment_source="crunchbase_odm",
     )
-    print(result)
+    print(f"Contact ID: {contact_id}")
+    log_email_event(
+        contact_id,
+        event_type="outbound_email_sent",
+        note="subject=Test | variant=signal_grounded",
+    )

@@ -1,0 +1,10 @@
+python-dotenv==1.2.2
+requests==2.33.1
+resend==2.29.0
+africastalking==1.2.8
+hubspot-api-client==12.0.0
+langfuse==4.5.0
+playwright==1.58.0
+openai==1.78.0
+msgpack==1.1.0
+brotli==1.1.0

@@ -1,117 +1,159 @@
 """
 agent/calendar_handler.py
 
-Cal.com Cloud integration.
+Cal.com REST API integration.
 Used to book discovery calls between prospects and Tenacious delivery leads.
 The agent's final objective is to book this call with a clear context brief.
+
+All bookings are marked 'draft' in metadata per data-handling policy.
 """
 
 import os
+from datetime import date, timedelta
+from typing import Optional
+
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-CALCOM_API_KEY = os.getenv("CALCOM_API_KEY")
-CALCOM_BASE_URL = "https://api.cal.com/v1"
+_CALCOM_API_KEY = os.getenv("CALCOM_API_KEY")
+_CALCOM_BASE_URL = os.getenv("CALCOM_BASE_URL", "https://api.cal.com/v1")
+_DISCOVERY_EVENT_TYPE_ID = int(os.getenv("CALCOM_EVENT_TYPE_ID", "1"))
 
 
 def get_available_slots(
-    event_type_id: int,
-    start_date: str,
-    end_date: str,
+    event_type_id: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     timezone: str = "UTC",
 ) -> list[dict]:
     """
-    Fetch available booking slots for a given event type.
+    Fetch available booking slots for the Tenacious discovery call event.
 
     Args:
-        event_type_id:  Cal.com event type ID (discovery call)
-        start_date:     ISO date string e.g. '2026-04-22'
-        end_date:       ISO date string e.g. '2026-04-29'
-        timezone:       Prospect's timezone e.g. 'America/New_York'
+        event_type_id:  Cal.com event type ID (defaults to CALCOM_EVENT_TYPE_ID env)
+        start_date:     ISO date string e.g. '2026-04-22' (defaults to today)
+        end_date:       ISO date string e.g. '2026-04-29' (defaults to today + 7 days)
+        timezone:       Prospect timezone e.g. 'America/New_York'
 
     Returns:
-        List of available slot dicts with start/end times
+        List of slot dicts with startTime fields
     """
-    response = requests.get(
-        f"{CALCOM_BASE_URL}/slots",
-        params={
-            "apiKey":      CALCOM_API_KEY,
-            "eventTypeId": event_type_id,
-            "startTime":   start_date,
-            "endTime":     end_date,
-            "timeZone":    timezone,
-        },
-    )
-    response.raise_for_status()
-    slots = response.json().get("slots", {})
+    event_id = event_type_id or _DISCOVERY_EVENT_TYPE_ID
+    start = start_date or date.today().isoformat()
+    end = end_date or (date.today() + timedelta(days=7)).isoformat()
 
-    # Flatten into list
-    flat_slots = []
-    for date, times in slots.items():
-        for slot in times:
-            flat_slots.append({"date": date, "time": slot.get("time")})
+    if not _CALCOM_API_KEY:
+        print("[calendar_handler] CALCOM_API_KEY not set - returning mock slot")
+        return [{"startTime": f"{start}T10:00:00Z", "endTime": f"{start}T10:30:00Z"}]
 
-    print(f"[calendar_handler] Found {len(flat_slots)} available slots")
-    return flat_slots
+    try:
+        response = requests.get(
+            f"{_CALCOM_BASE_URL}/slots",
+            params={
+                "apiKey": _CALCOM_API_KEY,
+                "eventTypeId": event_id,
+                "startTime": start,
+                "endTime": end,
+                "timeZone": timezone,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        slots_by_date = response.json().get("slots", {})
+
+        flat_slots = []
+        for _date, times in slots_by_date.items():
+            for slot in times:
+                flat_slots.append({
+                    "startTime": slot.get("time"),
+                    "date": _date,
+                })
+
+        print(f"[calendar_handler] {len(flat_slots)} slots available")
+        return flat_slots
+
+    except Exception as exc:
+        print(f"[calendar_handler] Slot fetch failed: {exc}")
+        return []
 
 
 def book_discovery_call(
-    event_type_id: int,
+    name: str,
+    email: str,
     start_time: str,
-    prospect_name: str,
-    prospect_email: str,
     context_brief: str,
+    event_type_id: Optional[int] = None,
     timezone: str = "UTC",
 ) -> dict:
     """
     Book a discovery call for a qualified prospect.
 
     Args:
-        event_type_id:   Cal.com event type ID
-        start_time:      ISO datetime string e.g. '2026-04-22T14:00:00Z'
-        prospect_name:   Full name of prospect
-        prospect_email:  Email of prospect
-        context_brief:   Summary of hiring signal brief — attached to booking
-        timezone:        Prospect's timezone
+        name:           Prospect name
+        email:          Prospect email
+        start_time:     ISO datetime e.g. '2026-04-22T14:00:00Z'
+        context_brief:  Summary of hiring signal brief attached to the booking
+        event_type_id:  Cal.com event type ID (defaults to env)
+        timezone:       Prospect timezone
 
     Returns:
         Cal.com booking confirmation dict
     """
+    event_id = event_type_id or _DISCOVERY_EVENT_TYPE_ID
+
+    if not _CALCOM_API_KEY:
+        print("[calendar_handler] CALCOM_API_KEY not set - returning mock booking")
+        return {
+            "id": "mock-booking-001",
+            "start_time": start_time,
+            "attendee": email,
+            "status": "mock",
+        }
+
     payload = {
-        "eventTypeId": event_type_id,
-        "start":       start_time,
-        "timeZone":    timezone,
+        "eventTypeId": event_id,
+        "start": start_time,
+        "timeZone": timezone,
         "responses": {
-            "name":  prospect_name,
-            "email": prospect_email,
-            "notes": context_brief,
+            "name": name,
+            "email": email,
+            "notes": context_brief[:1000],  # Cal.com notes field limit
         },
         "metadata": {
-            "source":  "tenacious-signal-forge",
-            "status":  "draft",  # data-handling policy
+            "source": "tenacious-signalforge",
+            "status": "draft",  # data-handling policy
         },
     }
 
-    response = requests.post(
-        f"{CALCOM_BASE_URL}/bookings",
-        params={"apiKey": CALCOM_API_KEY},
-        json=payload,
-    )
-    response.raise_for_status()
-    booking = response.json()
+    try:
+        response = requests.post(
+            f"{_CALCOM_BASE_URL}/bookings",
+            params={"apiKey": _CALCOM_API_KEY},
+            json=payload,
+            timeout=10,
+        )
+        response.raise_for_status()
+        booking = response.json()
+        print(f"[calendar_handler] Booked call for {email} at {start_time}")
+        return booking
 
-    print(f"[calendar_handler] Booked call for {prospect_email} at {start_time}")
-    return booking
+    except Exception as exc:
+        print(f"[calendar_handler] Booking failed: {exc}")
+        return {"error": str(exc), "start_time": start_time, "attendee": email}
 
 
 # ── Quick smoke test ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Just verify API key works by fetching event types
-    response = requests.get(
-        f"{CALCOM_BASE_URL}/event-types",
-        params={"apiKey": CALCOM_API_KEY},
-    )
-    print(f"[calendar_handler] Status: {response.status_code}")
-    print(response.json())
+    slots = get_available_slots()
+    print(f"Slots: {slots}")
+
+    if slots:
+        booking = book_discovery_call(
+            name="Alex Test",
+            email="test@example.com",
+            start_time=slots[0].get("startTime", ""),
+            context_brief="Test booking from smoke test.",
+        )
+        print(f"Booking: {booking}")
