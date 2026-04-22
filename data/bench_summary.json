@@ -1,0 +1,12 @@
+{
+  "updated_at": "2026-04-23",
+  "available_by_stack": {
+    "python": 8,
+    "go": 4,
+    "data_engineering": 6,
+    "ml_ai": 5,
+    "infrastructure": 4
+  },
+  "total_available": 27,
+  "notes": "Bench snapshot for challenge week. Updated Monday/Thursday by Tenacious delivery team."
+}
