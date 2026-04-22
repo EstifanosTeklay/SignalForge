@@ -1,7 +1,7 @@
 """
 agent/enrichment/job_scraper.py
 
-Signal pipeline skeleton — Day 0 deliverable.
+Signal pipeline skeleton — Day 0 deliverable
 Fetches public job listings from a company's Wellfound page and saves as JSON.
 
 Rules:
