@@ -1,12 +1,14 @@
 # agent/models/__init__.py
-from .agent.models.company import Company, FundingInfo, LayoffInfo
-from .agent.models.signals import (
+from .company import Company, FundingInfo, LayoffInfo, LeadershipChange
+from .signals import (
     SignalConfidence,
     FundingSignal,
     HiringSignal,
     LayoffSignal,
     LeadershipChangeSignal,
     AIMaturitySignal,
+    ICPSegment,
+    ICPClassification,
     HiringSignalBrief,
 )
 
@@ -14,11 +16,14 @@ __all__ = [
     "Company",
     "FundingInfo",
     "LayoffInfo",
+    "LeadershipChange",
     "SignalConfidence",
     "FundingSignal",
     "HiringSignal",
     "LayoffSignal",
     "LeadershipChangeSignal",
     "AIMaturitySignal",
+    "ICPSegment",
+    "ICPClassification",
     "HiringSignalBrief",
 ]
