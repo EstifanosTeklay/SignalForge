@@ -20,8 +20,11 @@ langfuse==4.5.0
 # Scraping
 playwright==1.58.0
 
-# Evaluation
-# tau2-bench — cloned separately, not pip installed
-
 # LLM
 openai==1.78.0        # OpenRouter is OpenAI-compatible
+
+# Evaluation
+# tau2-bench — cloned separately at eval/tau2-bench/, not pip installed
+
+# Data
+# No pandas required — using stdlib csv for lightweight parsing
