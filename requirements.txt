@@ -1,0 +1,27 @@
+# Core
+python-dotenv==1.2.2
+requests==2.33.1
+
+# Email
+resend==2.29.0
+
+# SMS
+africastalking==1.2.8
+
+# CRM
+hubspot-api-client==12.0.0
+
+# Calendar
+# Cal.com is REST API only — no SDK needed
+
+# Observability
+langfuse==4.5.0
+
+# Scraping
+playwright==1.58.0
+
+# Evaluation
+# tau2-bench — cloned separately, not pip installed
+
+# LLM
+openai==1.78.0        # OpenRouter is OpenAI-compatible

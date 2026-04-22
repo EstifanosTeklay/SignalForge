@@ -1,0 +1,39 @@
+# Environment variables — NEVER commit this
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Outputs and snapshots
+*.json
+!score_log.json
+!evidence_graph.json
+job_snapshot.json
+
+# Logs
+*.log
+*.jsonl
+!trace_log.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
