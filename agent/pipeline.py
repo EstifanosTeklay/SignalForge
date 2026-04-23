@@ -96,7 +96,9 @@ def run_outbound(
 
         result["icp_segment"] = brief.icp.segment.value
         result["ai_maturity"] = brief.ai_maturity.score
-        result["signal_confidence"] = brief.icp.confidence.value
+        result["signal_confidence"] = brief.icp.confidence_score  # numeric 0–1
+        result["signal_confidence_tier"] = brief.icp.confidence.value  # high/medium/low/none
+        result["honesty_flags"] = brief.honesty_flags
 
         # ── Agent 2: Insight ──────────────────────────────────────────────────
         print(f"[pipeline] -- Agent 2: Insight --")
@@ -105,7 +107,7 @@ def run_outbound(
         insight = insight_agent.run(company, brief, save_path=insight_path)
 
         result["pitch_angle"] = insight.get("pitch_angle")
-        result["gap_count"] = len(insight.get("competitor_gap_brief", {}).get("gaps", []))
+        result["gap_count"] = len(insight.get("competitor_gap_brief", {}).get("gap_findings", []))
 
         # ── Agent 3: Message ──────────────────────────────────────────────────
         print(f"[pipeline] -- Agent 3: Message --")

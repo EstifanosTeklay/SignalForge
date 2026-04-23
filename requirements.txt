@@ -21,7 +21,7 @@ langfuse==4.5.0
 playwright==1.58.0
 
 # LLM
-openai==1.78.0        # OpenRouter is OpenAI-compatible
+anthropic>=0.78.0     # Direct Anthropic SDK (replaces OpenRouter/openai)
 
 # Evaluation
 # tau2-bench — cloned separately at eval/tau2-bench/, not pip installed

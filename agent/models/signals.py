@@ -133,23 +133,36 @@ class AIMaturitySignal:
 class ICPSegment(str, Enum):
     """
     The four segments from the Tenacious ICP definition.
-    UNKNOWN is used when confidence is below abstention threshold.
+    ABSTAIN is used when confidence is below the 0.6 threshold — sends generic exploratory email.
     """
     RECENTLY_FUNDED    = "recently_funded"       # Segment 1
     COST_RESTRUCTURING = "cost_restructuring"    # Segment 2
     LEADERSHIP_CHANGE  = "leadership_change"     # Segment 3
     CAPABILITY_GAP     = "capability_gap"        # Segment 4
-    UNKNOWN            = "unknown"               # below abstention threshold
+    ABSTAIN            = "abstain"               # confidence < 0.6 — generic outreach only
+
+
+# Map SignalConfidence tiers to numeric scores used for the 0.6 abstention threshold
+CONFIDENCE_SCORE: dict[str, float] = {
+    "high":   0.85,
+    "medium": 0.65,
+    "low":    0.40,
+    "none":   0.0,
+}
+
+# Abstention threshold per icp_definition.md — below this, send generic exploratory email
+ABSTAIN_THRESHOLD = 0.6
 
 
 @dataclass
 class ICPClassification:
     """
     Segment assignment with confidence.
-    If confidence < threshold, the agent falls back to a generic exploratory email.
+    confidence_score < ABSTAIN_THRESHOLD (0.6) triggers the abstention path.
     """
     segment: ICPSegment
     confidence: SignalConfidence
+    confidence_score: float = 0.0        # numeric 0–1; used for abstention gate
     disqualified: bool = False
     disqualification_reason: Optional[str] = None
     justification: str = ""
@@ -175,6 +188,12 @@ class HiringSignalBrief:
     leadership:       LeadershipChangeSignal
     ai_maturity:      AIMaturitySignal
     icp:              ICPClassification
+
+    # Optional domain key — matches hiring_signal_brief.schema.json prospect_domain
+    prospect_domain: Optional[str] = None
+
+    # Honesty flags surfaced by the enrichment pipeline for the agent to respect
+    honesty_flags: list[str] = field(default_factory=list)
 
     # Overall data freshness flag — if any source is stale, agent should hedge
     data_is_stale: bool = False
