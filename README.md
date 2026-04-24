@@ -7,46 +7,69 @@ Automated B2B outbound system for **Tenacious Consulting & Outsourcing**. Detect
 ## Architecture
 
 ```
-                       ┌─────────────────────────────────────────────────┐
-                       │                  SignalForge Pipeline            │
-                       └──────────────────────┬──────────────────────────┘
-                                              │
-         ┌────────────────────────────────────▼────────────────────────────────────┐
-         │  1. Research / Signal Agent  (agent/agents/research_agent.py)           │
-         │  Sources: Crunchbase ODM CSV, layoffs.fyi (4,360 records), Wellfound    │
-         │  Outputs: Company model + HiringSignalBrief (funding / layoff /         │
-         │           leadership / AI-maturity / ICP segment)                       │
-         └──────────────────────────────────┬──────────────────────────────────────┘
-                                            │
-         ┌──────────────────────────────────▼──────────────────────────────────────┐
-         │  2. Insight / Brief Agent  (agent/agents/insight_agent.py)              │
-         │  Generates narrative, competitor-gap brief, selects pitch angle          │
-         │  LLM: deepseek/deepseek-chat-v3-0324 (dev) or claude-sonnet-4-6 (eval) │
-         └──────────────────────────────────┬──────────────────────────────────────┘
-                                            │
-         ┌──────────────────────────────────▼──────────────────────────────────────┐
-         │  3. Message Generation Agent  (agent/agents/message_agent.py)           │
-         │  Produces subject + HTML/text email body, selects A/B variant           │
-         │  Kill-switch: OUTBOUND_ENABLED=false routes to SINK_EMAIL               │
-         └──────────────────────────────────┬──────────────────────────────────────┘
-                                            │
-         ┌──────────────────────────────────▼──────────────────────────────────────┐
-         │  4. Guardrail Agent  (agent/agents/guardrail_agent.py)                  │
-         │  Verdict: PASS / WARN / BLOCK — checks style, claims, bench bench_ok    │
-         │  Auto-corrects WARN; drops BLOCK; logs all decisions via Langfuse        │
-         └──────────────────────────────────┬──────────────────────────────────────┘
-                                            │
-         ┌──────────────────────────────────▼──────────────────────────────────────┐
-         │  5. Conversation Agent  (agent/agents/conversation_agent.py)            │
-         │  State machine: COLD → REPLIED → QUALIFIED → BOOKED → STALLED → CLOSED │
-         │  Handles Resend reply webhooks, books Cal.com calls, sends AT SMS        │
-         └──────────────────────────────────┬──────────────────────────────────────┘
-                                            │
-         ┌──────────────────────────────────▼──────────────────────────────────────┐
-         │  Production Stack                                                        │
-         │  Email: Resend  |  SMS: Africa's Talking  |  CRM: HubSpot (sandbox)    │
-         │  Calendar: Cal.com  |  Observability: Langfuse 4.x                      │
-         └─────────────────────────────────────────────────────────────────────────┘
+  Public Data Sources
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  Crunchbase ODM CSV  ·  layoffs.fyi (4,360 records)  ·  Wellfound│
+  │  BuiltIn  ·  LinkedIn public pages                               │
+  └───────────────────────────┬──────────────────────────────────────┘
+                              │ enrichment
+  ┌───────────────────────────▼──────────────────────────────────────┐
+  │  1. ResearchAgent  (agent/agents/research_agent.py)              │
+  │  Outputs: HiringSignalBrief — funding / layoff / leadership /    │
+  │           AI-maturity / ICP segment / confidence score           │
+  │  ──────────────────────── writes ──────────────────────────────► │ HubSpot CRM
+  │  (upsert_contact, enrichment_timestamp, icp_segment)            │ (contact created,
+  └───────────────────────────┬──────────────────────────────────────┘  enrichment logged)
+                              │ brief
+  ┌───────────────────────────▼──────────────────────────────────────┐
+  │  2. InsightAgent  (agent/agents/insight_agent.py)                │
+  │  LLM call → narrative + competitor_gap_brief + pitch angle       │
+  │  Backbone LLM: OpenRouter → deepseek-v3 (dev)                   │
+  │                           → claude-sonnet-4-6 (eval)            │
+  │  All LLM calls traced ─────────────────────────────────────────► │ Langfuse 4.x
+  └───────────────────────────┬──────────────────────────────────────┘  (observability)
+                              │ insight + draft
+  ┌───────────────────────────▼──────────────────────────────────────┐
+  │  3. MessageAgent  (agent/agents/message_agent.py)                │
+  │  Produces 3-email sequence (120 / 100 / 70 word limits)         │
+  │  Kill-switch: OUTBOUND_ENABLED=false → routes to SINK_EMAIL      │
+  └───────────────────────────┬──────────────────────────────────────┘
+                              │ draft email
+  ┌───────────────────────────▼──────────────────────────────────────┐
+  │  4. GuardrailAgent  (agent/agents/guardrail_agent.py)            │
+  │  Verdict: PASS / WARN (auto-correct) / BLOCK (drop + regen)     │
+  │  Checks: tone · claim honesty · bench availability              │
+  │  All verdicts traced ──────────────────────────────────────────► │ Langfuse 4.x
+  └───────────────────────────┬──────────────────────────────────────┘
+                              │ approved email
+  ┌───────────────────────────▼──────────────────────────────────────┐
+  │  email_handler.py  (Resend)                                      │
+  │  send_email() + handle_reply_webhook()                          │
+  │  ──────────────────────── writes ──────────────────────────────► │ HubSpot CRM
+  └───────────────────────────┬──────────────────────────────────────┘  (email_sent event)
+                              │ on_reply callback
+  ┌───────────────────────────▼──────────────────────────────────────┐
+  │  5. ConversationAgent  (agent/agents/conversation_agent.py)      │
+  │  State machine: COLD→REPLIED→QUALIFIED→BOOKED→STALLED→CLOSED    │
+  │  Handles reply webhooks + SMS inbound (Africa's Talking)        │
+  │  ──────────────── book_discovery_call() ───────────────────────► │ Cal.com
+  │  (get_available_slots, generate booking link, confirm booking)  │ (booking link
+  │  ──────────────── send_sms() [warm leads only] ────────────────► │  in email + SMS)
+  │  ──────────────── writes ──────────────────────────────────────► │ HubSpot CRM
+  │  (qualification answers, call_booked, thread_state updates)     │
+  │  All state transitions traced ─────────────────────────────────► │ Langfuse 4.x
+  └──────────────────────────────────────────────────────────────────┘
+
+  Channel Handlers (supporting services)
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  email_handler.py     Resend API — send + reply webhook          │
+  │  sms_handler.py       Africa's Talking — send + inbound webhook  │
+  │                       warm-lead gate: only after email reply     │
+  │  crm_handler.py       HubSpot — upsert_contact, log_email_event  │
+  │  calendar_handler.py  Cal.com — get_slots, book_discovery_call   │
+  │  observability.py     Langfuse 4.x — @observe decorator,        │
+  │                       thread-safe across parallel agent runs     │
+  └──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -85,9 +108,14 @@ SignalForge/
 │   ├── score_log.json              # pass@1, 95% CI, cost, latency
 │   ├── trace_log.jsonl             # Full trajectories across all dev trials
 │   └── baseline.md                 # Reproduction report (<=400 words)
+├── probes/
+│   ├── probe_library.md            # 35 adversarial probes across 10 failure categories
+│   ├── failure_taxonomy.md         # Probes grouped by category with aggregate trigger rates
+│   └── target_failure_mode.md      # Highest-ROI failure selected with business-cost arithmetic
 ├── scripts/
 │   ├── fetch_layoffs_v5.py         # Playwright scraper — intercepts Airtable API
 │   └── fetch_layoffs.py            # Fallback scraper
+├── method.md                       # Mechanism design: bench validation gate + ablations + test plan
 ├── requirements.txt
 └── README.md
 ```
