@@ -95,6 +95,16 @@ _AI_LEADERSHIP_KEYWORDS = [
     "director of ai", "director of ml", "ai lead",
 ]
 
+# GitHub AI activity markers — org names, repo patterns, or tech mentions
+# that indicate the company has a public AI-oriented GitHub presence.
+_GITHUB_AI_MARKERS = [
+    "github.com",
+    "open-source", "open source",
+    "hugging face", "huggingface",
+    "model card", "model weights",
+    "mlops", "llm", "rag pipeline", "fine-tuning",
+]
+
 # ICP-qualified geographies for Segment 1 (North America, UK, Germany, France, Nordics, Ireland)
 _SEG1_COUNTRIES = {
     "us", "usa", "united states", "ca", "canada",
@@ -202,7 +212,19 @@ def _compute_funding(company: Company) -> FundingSignal:
     )
 
 
-def _compute_hiring(company: Company) -> HiringSignal:
+def _compute_hiring(
+    company: Company,
+    prior_snapshot: Optional[dict] = None,
+) -> HiringSignal:
+    """
+    Compute hiring signal.
+
+    velocity_ratio is a 60-day delta: (current_count - prior_count) / prior_count.
+    Requires prior_snapshot = {"open_roles_count": int, "snapshot_date": "YYYY-MM-DD"}.
+    When prior_snapshot is absent, velocity_ratio is None and confidence is capped
+    at LOW regardless of current count.  The caller (ResearchAgent) should pass a
+    prior snapshot from job_snapshot.json when available so velocity is real.
+    """
     count = company.open_roles_count or 0
     titles = [t.lower() for t in company.open_role_titles]
 
@@ -221,19 +243,56 @@ def _compute_hiring(company: Company) -> HiringSignal:
             justification="No open roles found in public job post snapshot.",
         )
 
-    # Velocity requires two snapshots 60 days apart; single snapshot = LOW confidence
-    confidence = SignalConfidence.LOW if count < 5 else SignalConfidence.MEDIUM
+    # ── 60-day velocity delta ─────────────────────────────────────────────────
+    velocity_ratio: Optional[float] = None
+    velocity_note = ""
+
+    if prior_snapshot:
+        prior_count = prior_snapshot.get("open_roles_count", 0)
+        prior_date_str = prior_snapshot.get("snapshot_date", "")
+        try:
+            prior_date = date.fromisoformat(prior_date_str)
+            today = date.today()
+            days_elapsed = (today - prior_date).days
+            if days_elapsed > 0 and prior_count > 0:
+                # Normalise to a 60-day window
+                raw_delta = count - prior_count
+                velocity_ratio = round((raw_delta / prior_count) * (60 / days_elapsed), 3)
+                direction = "up" if raw_delta > 0 else "down" if raw_delta < 0 else "flat"
+                velocity_note = (
+                    f"Velocity {velocity_ratio:+.1%} over {days_elapsed}d "
+                    f"(normalised to 60-day window, {direction}: "
+                    f"{prior_count}→{count} roles)."
+                )
+            elif prior_count == 0:
+                velocity_ratio = 1.0  # new roles appeared from zero
+                velocity_note = f"First hiring signal detected; {count} roles vs zero prior."
+        except (ValueError, TypeError):
+            pass  # malformed snapshot_date — skip velocity
+
     has_ai = ai_count > 0
+
+    if velocity_ratio is not None:
+        confidence = SignalConfidence.HIGH if abs(velocity_ratio) > 0.5 else SignalConfidence.MEDIUM
+    elif count >= 5:
+        confidence = SignalConfidence.MEDIUM
+    else:
+        confidence = SignalConfidence.LOW
 
     parts = [f"{count} open role{'s' if count != 1 else ''} found in public job snapshot."]
     if has_ai:
         parts.append(f"{ai_count} AI-adjacent role{'s' if ai_count != 1 else ''} detected.")
-    if count >= 5:
-        parts.append("Volume suggests active hiring phase.")
+    if velocity_note:
+        parts.append(velocity_note)
+    elif count >= 5:
+        parts.append(
+            "Volume suggests active hiring phase. "
+            "No prior snapshot — 60-day velocity requires a second data point."
+        )
 
     return HiringSignal(
         open_roles_count=count,
-        velocity_ratio=None,
+        velocity_ratio=velocity_ratio,
         has_ai_adjacent_roles=has_ai,
         ai_adjacent_role_count=ai_count,
         confidence=confidence,
@@ -393,10 +452,33 @@ def _compute_ai_maturity(company: Company) -> AIMaturitySignal:
         score_float += 0.25
         evidence.append("Single public AI mention from executive or press.")
 
+    # ── GitHub AI activity (MEDIUM weight, 0.5 pt) ───────────────────────────
+    # Detected from: company website domain (github.com org), detected_technologies,
+    # or public_ai_mentions containing GitHub/open-source AI markers.
+    # A future enhancement can replace this with a live GitHub API check.
+    all_tech = " ".join(company.detected_technologies).lower()
+    all_mentions = " ".join(company.public_ai_mentions).lower()
+    website_lower = (company.website or "").lower()
+
+    github_signals: list[str] = []
+    if "github.com" in website_lower:
+        github_signals.append("company GitHub org linked from website")
+    if any(m in all_tech for m in _GITHUB_AI_MARKERS):
+        matched = [m for m in _GITHUB_AI_MARKERS if m in all_tech]
+        github_signals.append(f"AI-related tech markers in stack: {', '.join(matched[:3])}")
+    if any(m in all_mentions for m in _GITHUB_AI_MARKERS):
+        matched = [m for m in _GITHUB_AI_MARKERS if m in all_mentions]
+        github_signals.append(f"Open-source/GitHub AI activity in public mentions: {', '.join(matched[:3])}")
+
+    has_github_ai_activity = bool(github_signals)
+    if has_github_ai_activity:
+        score_float += 0.5
+        evidence.append(f"GitHub/open-source AI activity detected: {'; '.join(github_signals)}.")
+
     final_score = min(3, round(score_float))
 
     high_weight_count = sum([ai_count >= 3, has_ai_leadership])
-    medium_weight_count = sum([ai_mention_count >= 2, bool(ml_stack_hits)])
+    medium_weight_count = sum([ai_mention_count >= 2, bool(ml_stack_hits), has_github_ai_activity])
 
     if high_weight_count >= 2 or (high_weight_count >= 1 and medium_weight_count >= 1):
         confidence = SignalConfidence.HIGH
@@ -412,7 +494,7 @@ def _compute_ai_maturity(company: Company) -> AIMaturitySignal:
         confidence=confidence,
         ai_adjacent_role_count=ai_count,
         has_named_ai_leadership=has_ai_leadership,
-        has_github_ai_activity=None,
+        has_github_ai_activity=has_github_ai_activity,
         has_exec_ai_commentary=ai_mention_count > 0,
         has_modern_ml_stack=bool(ml_stack_hits),
         evidence_notes=evidence,
