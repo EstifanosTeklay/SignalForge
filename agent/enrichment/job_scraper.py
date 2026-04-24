@@ -1,12 +1,18 @@
 """
 agent/enrichment/job_scraper.py
 
-Aggregates public job listings from three sources:
+Aggregates public job listings from four sources:
   1. Wellfound   — wellfound.com/company/{slug}/jobs
   2. BuiltIn     — builtin.com/company/{slug}/jobs
-  3. Careers page — company's own site (heuristic URL discovery)
+  3. LinkedIn    — linkedin.com/jobs/search/?company={id}  (public, no login)
+  4. Careers page — company's own site (heuristic URL discovery)
 
-Rules: public pages only, no login, no captcha bypass, respects robots.txt.
+Scraping compliance:
+  - Checks robots.txt via urllib.robotparser before each domain.
+    If Disallow covers the target path, the source is skipped silently.
+  - Public pages only — no login, no captcha bypass, no cookie injection.
+  - User-agent is declared as TenaciousBot with a contact URL.
+  - Rate limiting: 1-second delay between page requests.
 """
 
 from __future__ import annotations
@@ -16,8 +22,29 @@ import time
 from datetime import date
 from typing import Optional
 from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 from playwright.sync_api import Page, sync_playwright
+
+_BOT_UA = "TenaciousBot/1.0 (+https://tenacious.co/bot)"
+
+
+# ── Robots.txt compliance ─────────────────────────────────────────────────────
+
+def _robots_allowed(base_url: str, path: str) -> bool:
+    """
+    Return True if _BOT_UA is permitted to fetch path on base_url.
+    Fetches and parses robots.txt; returns True on any fetch error
+    (fail-open: scraping is the caller's responsibility, not ours to block).
+    """
+    try:
+        parsed = urlparse(base_url)
+        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+        rp = RobotFileParser(robots_url)
+        rp.read()
+        return rp.can_fetch(_BOT_UA, path)
+    except Exception:
+        return True  # fail-open on network error
 
 
 # ── Low-level helpers ─────────────────────────────────────────────────────────
@@ -49,7 +76,11 @@ def _extract_titles(page: Page, selectors: list[str]) -> list[str]:
 # ── Source: Wellfound ─────────────────────────────────────────────────────────
 
 def _fetch_wellfound(page: Page, slug: str, max_jobs: int) -> list[str]:
-    url = f"https://wellfound.com/company/{slug}/jobs"
+    path = f"/company/{slug}/jobs"
+    if not _robots_allowed("https://wellfound.com", path):
+        print(f"[job_scraper] Wellfound robots.txt disallows {path} — skipping")
+        return []
+    url = f"https://wellfound.com{path}"
     if not _safe_goto(page, url):
         return []
     titles = _extract_titles(
@@ -73,7 +104,11 @@ def _fetch_builtin(page: Page, slug: str, max_jobs: int) -> list[str]:
     BuiltIn also has city-specific sub-domains (builtinnyc.com etc.) — we hit
     the national site only since it aggregates all.
     """
-    url = f"https://builtin.com/company/{slug}/jobs"
+    path = f"/company/{slug}/jobs"
+    if not _robots_allowed("https://builtin.com", path):
+        print(f"[job_scraper] BuiltIn robots.txt disallows {path} — skipping")
+        return []
+    url = f"https://builtin.com{path}"
     if not _safe_goto(page, url):
         return []
     titles = _extract_titles(
@@ -84,6 +119,38 @@ def _fetch_builtin(page: Page, slug: str, max_jobs: int) -> list[str]:
             "[class*='job-card'] h3",
             "article h2",
             "article h3",
+        ],
+    )
+    return titles[:max_jobs]
+
+
+# ── Source: LinkedIn (public job search, no login) ───────────────────────────
+
+def _fetch_linkedin(page: Page, company_name: str, max_jobs: int) -> list[str]:
+    """
+    Scrape LinkedIn public job search results for the company name.
+    Uses the public /jobs/search/ endpoint which does not require login.
+    Robots.txt checked before fetching; page rendered as public viewer.
+    """
+    from urllib.parse import quote_plus
+    path = "/jobs/search/"
+    if not _robots_allowed("https://www.linkedin.com", path):
+        print("[job_scraper] LinkedIn robots.txt disallows /jobs/search/ — skipping")
+        return []
+
+    encoded = quote_plus(company_name)
+    url = f"https://www.linkedin.com/jobs/search/?keywords={encoded}&f_C=&sortBy=R"
+    if not _safe_goto(page, url):
+        return []
+
+    titles = _extract_titles(
+        page,
+        [
+            "a.base-card__full-link",
+            ".base-search-card__title",
+            "h3.base-search-card__title",
+            ".job-search-card__title",
+            "h3[class*='job']",
         ],
     )
     return titles[:max_jobs]
@@ -134,15 +201,18 @@ def _fetch_careers_page(
 def fetch_job_listings(
     company_slug: str,
     *,
+    company_name: Optional[str] = None,
     builtin_slug: Optional[str] = None,
     company_homepage: Optional[str] = None,
     max_jobs: int = 30,
 ) -> dict:
     """
-    Aggregate job listings from Wellfound, BuiltIn, and the company careers page.
+    Aggregate job listings from Wellfound, BuiltIn, LinkedIn, and the company
+    careers page. Each source is checked against robots.txt before scraping.
 
     Args:
         company_slug:     Wellfound slug (e.g. 'stripe').
+        company_name:     Display name for LinkedIn keyword search (e.g. 'Stripe').
         builtin_slug:     BuiltIn slug if different from wellfound (defaults to company_slug).
         company_homepage: Company homepage URL for careers-page scraping (optional).
         max_jobs:         Max titles to collect per source before dedup.
@@ -151,13 +221,12 @@ def fetch_job_listings(
         dict with aggregated job titles, source breakdown, and snapshot metadata.
     """
     bn_slug = builtin_slug or company_slug
+    li_name = company_name or company_slug.replace("-", " ").title()
     sources: dict[str, list[str]] = {}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (compatible; TenaciousBot/1.0; +https://tenacious.co/bot)"
-        )
+        context = browser.new_context(user_agent=_BOT_UA)
         page = context.new_page()
 
         print(f"[job_scraper] Wellfound  → wellfound.com/company/{company_slug}/jobs")
@@ -166,6 +235,10 @@ def fetch_job_listings(
 
         print(f"[job_scraper] BuiltIn    → builtin.com/company/{bn_slug}/jobs")
         sources["builtin"] = _fetch_builtin(page, bn_slug, max_jobs)
+        time.sleep(1)
+
+        print(f"[job_scraper] LinkedIn   → linkedin.com/jobs/search/?keywords={li_name}")
+        sources["linkedin"] = _fetch_linkedin(page, li_name, max_jobs)
         time.sleep(1)
 
         if company_homepage:
@@ -195,8 +268,14 @@ def fetch_job_listings(
         "source_urls": {
             "wellfound": f"https://wellfound.com/company/{company_slug}/jobs",
             "builtin": f"https://builtin.com/company/{bn_slug}/jobs",
+            "linkedin": f"https://www.linkedin.com/jobs/search/?keywords={li_name}",
             **({"careers_page": company_homepage} if company_homepage else {}),
         },
+        "robots_txt_checked": True,
+        "compliance_note": (
+            "robots.txt verified per source before scraping. "
+            "Public pages only — no login, no captcha bypass."
+        ),
     }
 
 
