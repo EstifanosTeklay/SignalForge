@@ -1,0 +1,154 @@
+{
+  "prospect_domain": "acme-logistics.com",
+  "prospect_sector": "Logistics & Supply Chain Software",
+  "generated_at": "2026-04-25T09:14:02.381Z",
+  "prospect_ai_maturity_score": 1,
+  "sector_top_quartile_benchmark": 2.5,
+  "competitors_analyzed": [
+    {
+      "name": "Flexport",
+      "domain": "flexport.com",
+      "ai_maturity_score": 3,
+      "ai_maturity_justification": [
+        "Named VP of Machine Learning on public team page (linkedin.com/in/...)",
+        "Open 'Senior ML Engineer — Freight Forecasting' role on Wellfound (wellfound.com/company/flexport/jobs)",
+        "Public GitHub org github.com/flexport with MLOps tooling repos"
+      ],
+      "headcount_band": "500_to_2000",
+      "top_quartile": true,
+      "sources_checked": ["https://flexport.com"]
+    },
+    {
+      "name": "project44",
+      "domain": "project44.com",
+      "ai_maturity_score": 3,
+      "ai_maturity_justification": [
+        "Chief AI Officer listed on leadership page (project44.com/about)",
+        "Stack includes Snowflake + dbt visible in BuiltWith data",
+        "4 open AI/ML roles on builtin.com/company/project44/jobs"
+      ],
+      "headcount_band": "200_to_500",
+      "top_quartile": true,
+      "sources_checked": ["https://project44.com"]
+    },
+    {
+      "name": "Transfix",
+      "domain": "transfix.io",
+      "ai_maturity_score": 2,
+      "ai_maturity_justification": [
+        "Head of Data Science role visible on LinkedIn (linkedin.com/company/transfix)",
+        "Databricks mentioned in engineering blog post (transfix.io/blog/data-platform)"
+      ],
+      "headcount_band": "80_to_200",
+      "top_quartile": true,
+      "sources_checked": ["https://transfix.io"]
+    },
+    {
+      "name": "Mothership",
+      "domain": "mothership.com",
+      "ai_maturity_score": 2,
+      "ai_maturity_justification": [
+        "Open 'ML Engineer — Route Optimisation' role on Wellfound",
+        "MLflow referenced in open engineering job description"
+      ],
+      "headcount_band": "80_to_200",
+      "top_quartile": true,
+      "sources_checked": ["https://mothership.com"]
+    },
+    {
+      "name": "Logixboard",
+      "domain": "logixboard.com",
+      "ai_maturity_score": 1,
+      "ai_maturity_justification": [
+        "Single 'Data Analyst' role open; no dedicated AI/ML roles detected"
+      ],
+      "headcount_band": "15_to_80",
+      "top_quartile": false,
+      "sources_checked": ["https://logixboard.com"]
+    },
+    {
+      "name": "Turvo",
+      "domain": "turvo.com",
+      "ai_maturity_score": 1,
+      "ai_maturity_justification": [
+        "General-purpose engineering roles open; no AI/ML-specific signal"
+      ],
+      "headcount_band": "80_to_200",
+      "top_quartile": false,
+      "sources_checked": ["https://turvo.com"]
+    },
+    {
+      "name": "Shipwell",
+      "domain": "shipwell.com",
+      "ai_maturity_score": 0,
+      "ai_maturity_justification": [
+        "No public AI signal detected."
+      ],
+      "headcount_band": "80_to_200",
+      "top_quartile": false,
+      "sources_checked": ["https://shipwell.com"]
+    }
+  ],
+  "gap_findings": [
+    {
+      "practice": "Named AI/ML leadership role (Head of AI, VP Data, or Chief Scientist) present on public team page",
+      "peer_evidence": [
+        {
+          "competitor_name": "Flexport",
+          "evidence": "AI maturity score 3/3 based on: Named VP of Machine Learning on public team page; Open 'Senior ML Engineer — Freight Forecasting' role on Wellfound",
+          "source_url": "https://flexport.com/team"
+        },
+        {
+          "competitor_name": "project44",
+          "evidence": "AI maturity score 3/3 based on: Chief AI Officer listed on leadership page (project44.com/about); Stack includes Snowflake + dbt visible in BuiltWith data",
+          "source_url": "https://project44.com/about"
+        },
+        {
+          "competitor_name": "Transfix",
+          "evidence": "AI maturity score 2/3 based on: Head of Data Science role visible on LinkedIn; Databricks mentioned in engineering blog post",
+          "source_url": "https://transfix.io/team"
+        }
+      ],
+      "prospect_state": "Acme Logistics has no named AI/ML leadership role visible publicly. The CTO currently holds the AI remit.",
+      "confidence": "high",
+      "segment_relevance": ["segment_1_series_a_b", "segment_4_specialized_capability"]
+    },
+    {
+      "practice": "Dedicated AI/ML engineers embedded in product teams (visible as AI-adjacent open roles on public job boards)",
+      "peer_evidence": [
+        {
+          "competitor_name": "Flexport",
+          "evidence": "Open 'Senior ML Engineer — Freight Forecasting' role on Wellfound (wellfound.com/company/flexport/jobs)",
+          "source_url": "https://flexport.com"
+        },
+        {
+          "competitor_name": "Mothership",
+          "evidence": "Open 'ML Engineer — Route Optimisation' role on Wellfound",
+          "source_url": "https://mothership.com/careers"
+        },
+        {
+          "competitor_name": "project44",
+          "evidence": "4 open AI/ML roles on builtin.com/company/project44/jobs",
+          "source_url": "https://project44.com"
+        }
+      ],
+      "prospect_state": "No AI-adjacent open roles found publicly for Acme Logistics. This could reflect private listings, a hiring freeze, or deliberate choice to grow AI capability through existing engineers.",
+      "confidence": "medium",
+      "segment_relevance": ["segment_1_series_a_b", "segment_4_specialized_capability"]
+    }
+  ],
+  "suggested_pitch_shift": "Lead with the 'Named AI/ML leadership role' gap (high confidence). Frame as a question — is this a deliberate choice or still being scoped? Segment 4 pitch: 'three companies in your sector at your stage are doing X.'",
+  "gap_quality_self_check": {
+    "all_peer_evidence_has_source_url": true,
+    "at_least_one_gap_high_confidence": true,
+    "prospect_silent_but_sophisticated_risk": false,
+    "sparse_sector": false,
+    "peers_found": 7
+  },
+  "_meta": {
+    "peer_count_analysed": 7,
+    "sector_median_score": 2,
+    "sector_p75_score": 3,
+    "prospect_percentile": 0.286
+  }
+}
