@@ -213,6 +213,79 @@ python simulate_5trials.py     # regenerate score_log + trace_log
 
 ---
 
+## Handoff Notes
+
+This section is written for a new engineer inheriting or extending SignalForge.
+
+### Known limitations
+
+**Gap over-claiming (probe PL-033, 21.7% trigger rate)**
+`InsightAgent` calls `build_competitor_gap_brief()` which calls `extract_gap_findings()`.
+`gap_quality_self_check.at_least_one_gap_high_confidence` is computed and returned but the
+pipeline does not block on it — a `low` quality brief is still sent to `MessageAgent`.
+A one-sprint fix: enforce `gap_quality_self_check` as a blocking condition in `GuardrailAgent`
+and require a fallback to generic exploratory email when `all_peer_evidence_has_source_url=False`.
+
+**AI maturity false positives (AI staffing firms)**
+`_compute_ai_maturity()` in [agent/enrichment/signal_computer.py](agent/enrichment/signal_computer.py)
+scores AI staffing/recruiting firms at 2–3 because they post AI job ads for client placements.
+The ICP screener in `_classify_icp()` does not filter on SIC code or business model.
+Add an `industry_exclusion_list` to `icp_definition.md` and a pre-screen step in `ResearchAgent`.
+
+**Sparse-sector fallback is silent**
+When `select_competitors()` returns fewer than 5 peers, `_sparse_brief()` is used and the
+`competitor_gap_brief` comes back with `competitors_analyzed=[]`.  `InsightAgent` does not
+currently log or alert on sparse-sector cases.  Add a Langfuse event tag `sparse_sector=true`
+so the pattern is visible in the observability dashboard.
+
+**LinkedIn robots.txt**
+`_fetch_linkedin()` in [agent/enrichment/job_scraper.py](agent/enrichment/job_scraper.py)
+currently returns `[]` because LinkedIn's `robots.txt` disallows `/jobs/search/` for most
+user-agents.  The job scraper silently skips LinkedIn; Wellfound and BuiltIn remain active.
+This is correct behaviour (compliance policy) but means LinkedIn job signal is absent.
+
+**GitHub activity signal uses proxy heuristics**
+`_compute_github_activity()` in `signal_computer.py` does not call the GitHub API — it infers
+activity from website URL patterns and mention keywords.  Real GitHub API integration
+(rate-limited, requires `GITHUB_TOKEN`) would significantly improve precision for Segment 4
+(capability-gap) prospects.
+
+### Sharp edges for new engineers
+
+- **`OUTBOUND_ENABLED=false` is the safety net** — never set it to `true` in any environment
+  until Resend deliverability, HubSpot rate limits, and Africa's Talking send limits have been
+  validated against the live prospect volume.
+
+- **`GuardrailAgent` is the only blocking layer** — if you bypass it (e.g., by calling
+  `MessageAgent.run()` directly), tone violations and bench over-commitment will reach prospects.
+
+- **`send_sms()` in [agent/sms_handler.py](agent/sms_handler.py) raises `LeadStateError` for
+  cold leads** — this is intentional and tested.  Do not catch and suppress `LeadStateError`;
+  it is the enforcement mechanism for the warm-lead gate.
+
+- **Crunchbase ODM data is static CSV** — `load_companies_by_industry()` reads from
+  `CRUNCHBASE_CSV`.  The file is not refreshed automatically.  Stale peer data directly
+  degrades competitor gap brief quality.  Refresh quarterly or integrate the live Crunchbase
+  API when budget allows.
+
+- **`chat_json()` in `llm_client.py` retries 3× on JSON parse failure** — if the LLM returns
+  invalid JSON three times, it returns `{}`.  `InsightAgent` handles this gracefully by falling
+  back to deterministic narrative, but the Langfuse trace will show `narrative=""` in that case.
+
+### Concrete next steps for inheritors
+
+1. **Enforce `gap_quality_self_check` as blocking** in `GuardrailAgent` (one sprint; acceptance
+   test: PL-033 trigger rate drops below 5%).
+2. **Add ICP industry exclusion list** to filter AI staffing firms out of the Segment 4 path.
+3. **Wire `GITHUB_TOKEN` into `signal_computer.py`** and replace the keyword-proxy heuristics
+   with real GitHub API calls (org existence, recent commits, star velocity).
+4. **Add `sparse_sector=true` Langfuse tag** in `build_competitor_gap_brief()` so sparse-sector
+   frequency is visible in the ops dashboard without querying logs.
+5. **HubSpot deal-stage automation** — `pipeline.py` upserts contacts but does not advance
+   deal stages.  Wire `move_to_stage()` calls from `ConversationAgent` reply handling.
+
+---
+
 ## Requirements
 
 See [requirements.txt](requirements.txt).
